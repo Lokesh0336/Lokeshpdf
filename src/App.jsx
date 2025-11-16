@@ -5,7 +5,7 @@ import PdfToImage from "./components/PdfToImage";
 import "./index.css";
 
 /* Put your real Instagram profile here */
-const INSTAGRAM_URL = "https://www.instagram.com/your_instagram_here";
+const INSTAGRAM_URL = "https://www.instagram.com/lokesh_ragutla96/?igsh=ZHY2ZmcyZG1leGRh#";
 
 /* Logo PNG you gave (we use it directly as an external image). */
 const LOGO_SRC = "https://www.citypng.com/public/uploads/preview/hd-pdf-file-document-black-icon-png-701751695035299dspnijtzoi.png";
