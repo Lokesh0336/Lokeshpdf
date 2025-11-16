@@ -1,5 +1,5 @@
 {
-  "name": "image-to-pdf",
+  "name": "image-toolbox",
   "version": "1.0.0",
   "private": true,
   "engines": { "node": "18.x" },
@@ -9,7 +9,9 @@
     "preview": "vite preview --port 4173"
   },
   "dependencies": {
+    "file-saver": "^2.0.5",
     "jspdf": "^2.5.1",
+    "jszip": "^3.10.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
