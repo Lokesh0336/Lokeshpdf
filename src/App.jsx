@@ -5,7 +5,7 @@ import PdfToImage from "./components/PdfToImage";
 import "./index.css";
 
 /* Replace with your real Instagram URL */
-const INSTAGRAM_URL = "https://www.instagram.com/your_instagram_here";
+const INSTAGRAM_URL = "https://www.instagram.com/lokesh_ragutla96/?igsh=ZHY2ZmcyZG1leGRh#";
 
 export default function App() {
   const tabs = [
