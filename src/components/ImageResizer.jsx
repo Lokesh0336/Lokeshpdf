@@ -2,37 +2,41 @@ import React, { useState } from "react";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
-/** Resize image file using canvas; returns blob and a data URL for preview */
-function resizeBlobWithPreview(file, maxWidth, maxHeight, mime, quality) {
+/**
+ * Resize + compress using canvas and return a blob + preview
+ * width/height can be undefined to keep original size.
+ */
+function resizeCompress(file, targetWidth, targetHeight, mime, quality) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
       try {
-        let iw = img.width, ih = img.height;
+        const iw = img.width;
+        const ih = img.height;
+        // maintain aspect ratio
         let ratio = Math.min(
-          maxWidth ? maxWidth / iw : Infinity,
-          maxHeight ? maxHeight / ih : Infinity,
+          targetWidth ? targetWidth / iw : Infinity,
+          targetHeight ? targetHeight / ih : Infinity,
           1
         );
         if (!isFinite(ratio)) ratio = 1;
-        const width = Math.round(iw * ratio);
-        const height = Math.round(ih * ratio);
+        const w = Math.round(iw * ratio);
+        const h = Math.round(ih * ratio);
 
         const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = w;
+        canvas.height = h;
         const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
+        ctx.drawImage(img, 0, 0, w, h);
 
-        // create preview dataURL (resized small)
-        const previewDataUrl = canvas.toDataURL("image/png");
+        const preview = canvas.toDataURL("image/png"); // quick preview
 
         canvas.toBlob(
           (blob) => {
             URL.revokeObjectURL(url);
             if (!blob) return reject(new Error("toBlob returned null"));
-            resolve({ blob, previewDataUrl, width, height });
+            resolve({ blob, preview, width: w, height: h });
           },
           mime,
           quality
@@ -42,7 +46,7 @@ function resizeBlobWithPreview(file, maxWidth, maxHeight, mime, quality) {
         reject(err);
       }
     };
-    img.onerror = (e) => {
+    img.onerror = () => {
       URL.revokeObjectURL(url);
       reject(new Error("Image load error"));
     };
@@ -50,34 +54,102 @@ function resizeBlobWithPreview(file, maxWidth, maxHeight, mime, quality) {
   });
 }
 
+/**
+ * Attempt to compress image to target size (in bytes).
+ * Strategy:
+ *  - If source is PNG and user requested a target size, switch to JPEG for compression.
+ *  - Try decreasing JPEG quality stepwise; if not enough, scale down dimensions progressively.
+ *  - Stop when blob.size <= targetBytes or we've hit minimal quality/size limits.
+ */
+async function compressToTarget(file, targetBytes, maxWidth, maxHeight) {
+  // prefer JPEG when targeting size (JPEG compresses)
+  let mime = file.type === "image/png" ? "image/jpeg" : file.type;
+  // initial parameters
+  let curQuality = 0.92;
+  const minQuality = 0.20;
+  const qualityStep = 0.08; // reduce quality by this step
+  let scaleFactor = 1.0;
+  const minScale = 0.2; // don't scale below 20% original
+  const scaleStep = 0.9; // multiply by this to reduce
+
+  // we need original dimensions for scaling:
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+  URL.revokeObjectURL(url);
+
+  let baseW = img.width;
+  let baseH = img.height;
+  let currentW = Math.round(baseW * scaleFactor);
+  let currentH = Math.round(baseH * scaleFactor);
+
+  // loop until target met or limits reached
+  for (let scaleIter = 0; scaleIter < 30; scaleIter++) {
+    // within each scale, try decreasing quality steps
+    curQuality = 0.92;
+    while (curQuality >= minQuality) {
+      try {
+        const { blob, preview, width, height } = await resizeCompress(
+          file,
+          Math.min(maxWidth || Infinity, currentW),
+          Math.min(maxHeight || Infinity, currentH),
+          mime,
+          curQuality
+        );
+        if (blob.size <= targetBytes) {
+          return { blob, preview, width, height, usedMime: mime, usedQuality: curQuality };
+        }
+        // not small enough: reduce quality
+      } catch (err) {
+        console.error("compressToTarget error:", err);
+      }
+      curQuality = +(curQuality - qualityStep).toFixed(2);
+    }
+
+    // reduce dimensions and retry
+    scaleFactor = scaleFactor * scaleStep;
+    if (scaleFactor < minScale) break;
+    currentW = Math.max(1, Math.round(baseW * scaleFactor));
+    currentH = Math.max(1, Math.round(baseH * scaleFactor));
+  }
+
+  // final attempt at very low quality / size
+  try {
+    const { blob, preview, width, height } = await resizeCompress(
+      file,
+      Math.min(maxWidth || Infinity, currentW),
+      Math.min(maxHeight || Infinity, currentH),
+      mime,
+      Math.max(minQuality, 0.08)
+    );
+    return { blob, preview, width, height, usedMime: mime, usedQuality: Math.max(minQuality, 0.08) };
+  } catch (err) {
+    throw new Error("Unable to compress to target: " + (err.message || err));
+  }
+}
+
+/* ---------- Component ---------- */
+
 export default function ImageResizer() {
-  // original files selected
   const [files, setFiles] = useState([]);
-  // processed items after pressing Process
-  const [items, setItems] = useState([]);
-  // Mode: "preset" or "custom"
-  const [mode, setMode] = useState("preset");
+  const [items, setItems] = useState([]); // processed results
+  const [mode, setMode] = useState("quality"); // 'quality' or 'size'
 
-  // Preset selection (Mobile / Web / Print)
-  const presets = {
-    mobile: { label: "Mobile (800px)", maxWidth: 800, maxHeight: 800 },
-    web: { label: "Web (1200px)", maxWidth: 1200, maxHeight: 1200 },
-    print: { label: "Print (2000px)", maxWidth: 2000, maxHeight: 2000 }
-  };
-  const [selectedPreset, setSelectedPreset] = useState("web");
+  // common size limits (optional)
+  const [maxWidth, setMaxWidth] = useState(2000);
+  const [maxHeight, setMaxHeight] = useState(2000);
 
-  // Custom values
-  const [maxWidth, setMaxWidth] = useState(1200);
-  const [maxHeight, setMaxHeight] = useState(1200);
+  // Quality mode slider (0-100%)
+  const [qualityPct, setQualityPct] = useState(85); // percent, 0..100
 
-  // Output format & quality
+  // Target size mode
+  const [targetKB, setTargetKB] = useState(100); // desired file size in KB
+
+  // Format + behavior
   const [format, setFormat] = useState("image/jpeg");
-  const [quality, setQuality] = useState(0.85);
-
-  // Download behavior
   const [downloadZip, setDownloadZip] = useState(false);
 
-  // UI states
+  // UI
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
 
@@ -89,65 +161,73 @@ export default function ImageResizer() {
       setError("No images selected.");
       return;
     }
-    if (chosen.length > 200) chosen.length = 200;
+    if (chosen.length > 300) chosen.length = 300;
     setFiles(chosen);
   };
 
-  const getEffectiveSize = () => {
-    if (mode === "preset") {
-      const p = presets[selectedPreset];
-      return { maxWidth: p.maxWidth, maxHeight: p.maxHeight };
-    } else {
-      return {
-        maxWidth: Number(maxWidth) || undefined,
-        maxHeight: Number(maxHeight) || undefined
-      };
-    }
-  };
-
-  const processAll = async () => {
+  async function processAll() {
     if (!files.length) { setError("Please choose images first."); return; }
     setError("");
     setProcessing(true);
     setItems([]);
     try {
-      const { maxWidth: effW, maxHeight: effH } = getEffectiveSize();
       const out = [];
       for (let f of files) {
-        const { blob, previewDataUrl, width, height } = await resizeBlobWithPreview(
-          f,
-          effW,
-          effH,
-          format,
-          format === "image/png" ? 1.0 : Math.max(0.05, Number(quality))
-        );
-        out.push({
-          name: f.name.replace(/\.[^.]+$/, ""),
-          origName: f.name,
-          blob,
-          preview: previewDataUrl,
-          width,
-          height,
-          size: blob.size
-        });
+        if (mode === "quality") {
+          // QUALITY MODE: use slider percent to set quality
+          const q = format === "image/png" ? 1.0 : Math.max(0.05, qualityPct / 100);
+          const { blob, preview, width, height } = await resizeCompress(
+            f,
+            maxWidth || undefined,
+            maxHeight || undefined,
+            format,
+            q
+          );
+          out.push({
+            origName: f.name,
+            name: f.name.replace(/\.[^.]+$/, ""),
+            blob,
+            preview,
+            width,
+            height,
+            size: blob.size,
+            usedQuality: q,
+            usedFormat: format
+          });
+        } else {
+          // SIZE MODE: attempt to reach targetKB
+          const targetBytes = Math.max(4, Number(targetKB)) * 1024; // ensure at least 4KB
+          // If user chose PNG and wants a small size, informally convert to JPEG for compression
+          const effectiveMime = format === "image/png" && targetKB > 0 ? "image/jpeg" : format;
+          // call compressToTarget with optional maxWidth/maxHeight as limits
+          const result = await compressToTarget(f, targetBytes, maxWidth || undefined, maxHeight || undefined);
+          // If compressToTarget returned JPEG but user asked PNG, set usedFormat accordingly
+          out.push({
+            origName: f.name,
+            name: f.name.replace(/\.[^.]+$/, ""),
+            blob: result.blob,
+            preview: result.preview,
+            width: result.width,
+            height: result.height,
+            size: result.blob.size,
+            usedQuality: result.usedQuality,
+            usedFormat: result.usedMime
+          });
+        }
       }
       setItems(out);
     } catch (err) {
       console.error(err);
-      setError("Failed to process images: " + (err.message || err));
+      setError("Processing failed: " + (err.message || err));
     } finally {
       setProcessing(false);
     }
-  };
+  }
 
+  // download helpers
   const downloadSingle = async (item) => {
-    try {
-      const ext = format === "image/png" ? "png" : "jpg";
-      saveAs(item.blob, `${item.name}-resized.${ext}`);
-    } catch (err) {
-      console.error(err);
-      setError("Download failed: " + (err.message || err));
-    }
+    const ext = item.usedFormat === "image/png" ? "png" : "jpg";
+    saveAs(item.blob, `${item.name}-resized.${ext}`);
   };
 
   const downloadAllSequential = async () => {
@@ -156,9 +236,9 @@ export default function ImageResizer() {
     try {
       for (let it of items) {
         await new Promise(res => {
-          const ext = format === "image/png" ? "png" : "jpg";
+          const ext = it.usedFormat === "image/png" ? "png" : "jpg";
           saveAs(it.blob, `${it.name}-resized.${ext}`);
-          setTimeout(res, 350); // small delay for browser stability
+          setTimeout(res, 350);
         });
       }
     } catch (err) {
@@ -173,8 +253,8 @@ export default function ImageResizer() {
     setProcessing(true);
     try {
       const zip = new JSZip();
-      const ext = format === "image/png" ? "png" : "jpg";
       for (let it of items) {
+        const ext = it.usedFormat === "image/png" ? "png" : "jpg";
         zip.file(`${it.name}-resized.${ext}`, it.blob);
       }
       const content = await zip.generateAsync({ type: "blob" });
@@ -192,12 +272,6 @@ export default function ImageResizer() {
     else await downloadAllSequential();
   };
 
-  const clearAll = () => {
-    setFiles([]);
-    setItems([]);
-    setError("");
-  };
-
   const openInNewTab = async (item) => {
     try {
       const url = URL.createObjectURL(item.blob);
@@ -209,98 +283,100 @@ export default function ImageResizer() {
     }
   };
 
+  const clearAll = () => {
+    setFiles([]); setItems([]); setError("");
+  };
+
   return (
     <div>
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
-        <div style={{ fontWeight: 700 }}>Resize Mode</div>
+        <div style={{ fontWeight: 700 }}>Mode</div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
-            className={`tab ${mode === "preset" ? "active" : ""}`}
-            onClick={() => setMode("preset")}
+            className={`tab ${mode === "quality" ? "active" : ""}`}
+            onClick={() => setMode("quality")}
             style={{ padding: "8px 12px", borderRadius: 8 }}
           >
-            Quick Presets
+            Quality (slider)
           </button>
           <button
-            className={`tab ${mode === "custom" ? "active" : ""}`}
-            onClick={() => setMode("custom")}
+            className={`tab ${mode === "size" ? "active" : ""}`}
+            onClick={() => setMode("size")}
             style={{ padding: "8px 12px", borderRadius: 8 }}
           >
-            Custom Size
+            Target size (KB)
           </button>
         </div>
       </div>
 
-      {/* Preset UI */}
-      {mode === "preset" && (
-        <div className="controls" style={{ marginBottom: 10 }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {Object.keys(presets).map((k) => (
-              <label key={k} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <input
-                  type="radio"
-                  name="preset"
-                  checked={selectedPreset === k}
-                  onChange={() => setSelectedPreset(k)}
-                />
-                <div style={{ fontWeight: 700 }}>{presets[k].label}</div>
-                <div style={{ color: "var(--muted)", fontSize: 13 }}>{presets[k].maxWidth}×{presets[k].maxHeight} px</div>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Custom UI */}
-      {mode === "custom" && (
-        <div className="controls" style={{ marginBottom: 10 }}>
+      {/* Mode UIs */}
+      {mode === "quality" && (
+        <div className="controls" style={{ marginBottom: 12 }}>
           <div className="row">
             <label className="small">
-              Max width (px)
-              <input type="number" value={maxWidth} onChange={(e) => setMaxWidth(Number(e.target.value || 0))} />
+              Quality: {qualityPct}%
+              <input
+                type="range"
+                min="5"
+                max="100"
+                value={qualityPct}
+                onChange={(e) => setQualityPct(Number(e.target.value))}
+                style={{ width: 240 }}
+              />
             </label>
+
             <label className="small">
-              Max height (px)
-              <input type="number" value={maxHeight} onChange={(e) => setMaxHeight(Number(e.target.value || 0))} />
+              Format
+              <select value={format} onChange={(e) => setFormat(e.target.value)}>
+                <option value="image/jpeg">JPEG (smaller)</option>
+                <option value="image/png">PNG (lossless)</option>
+              </select>
             </label>
           </div>
         </div>
       )}
 
-      {/* Format & quality */}
-      <div className="controls" style={{ marginBottom: 10 }}>
-        <div className="row">
-          <label className="small">
-            Format
-            <select value={format} onChange={(e) => setFormat(e.target.value)}>
-              <option value="image/jpeg">JPEG (smaller)</option>
-              <option value="image/png">PNG (lossless)</option>
-            </select>
-          </label>
-
-          {format === "image/jpeg" && (
+      {mode === "size" && (
+        <div className="controls" style={{ marginBottom: 12 }}>
+          <div className="row">
             <label className="small">
-              Quality (JPEG)
-              <input type="number" step="0.05" min="0.1" max="1" value={quality} onChange={(e) => setQuality(Number(e.target.value || 0.85))} />
+              Target file size (KB)
+              <input type="number" value={targetKB} onChange={(e) => setTargetKB(Number(e.target.value || 0))} style={{ width: 120 }} />
             </label>
-          )}
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label className="small">
+              Max width (px)
+              <input type="number" value={maxWidth} onChange={(e) => setMaxWidth(Number(e.target.value || 0))} style={{ width: 120 }} />
+            </label>
+
+            <label className="small">
+              Max height (px)
+              <input type="number" value={maxHeight} onChange={(e) => setMaxHeight(Number(e.target.value || 0))} style={{ width: 120 }} />
+            </label>
+          </div>
+
+          <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 13 }}>
+            Note: For very small target sizes the file will be converted to JPEG if necessary and/or dimensions will be reduced to meet the target.
+          </div>
+        </div>
+      )}
+
+      {/* Common controls */}
+      <div className="controls" style={{ marginBottom: 10 }}>
+        <div className="row" style={{ alignItems: "center" }}>
+          <input type="file" accept="image/*" multiple onChange={handleFiles} />
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
             <input type="checkbox" checked={downloadZip} onChange={(e) => setDownloadZip(e.target.checked)} />
             <span style={{ fontSize: 13, color: "var(--muted)" }}>Download all as ZIP (single file)</span>
           </label>
         </div>
 
         <div className="row" style={{ marginTop: 8 }}>
-          <input type="file" accept="image/*" multiple onChange={handleFiles} />
-        </div>
-
-        <div className="row" style={{ marginTop: 8 }}>
           <button className="primary" onClick={processAll} disabled={processing || !files.length}>
-            {processing ? "Working..." : "Process images"}
+            {processing ? "Processing..." : "Process images"}
           </button>
 
-          <button className="primary" onClick={downloadAll} disabled={processing || !items.length} style={{ marginLeft: 8 }}>
+          <button className="primary" onClick={downloadAll} disabled={!items.length} style={{ marginLeft: 8 }}>
             Download All
           </button>
 
@@ -311,7 +387,7 @@ export default function ImageResizer() {
       {error && <div className="notice" style={{ color: "crimson" }}>{error}</div>}
 
       <div style={{ marginTop: 12 }}>
-        <strong>Processed images</strong>
+        <strong>Results</strong>
         {items.length === 0 ? (
           <div className="notice">No processed images yet. Click <strong>Process images</strong> after selecting files.</div>
         ) : (
@@ -320,7 +396,9 @@ export default function ImageResizer() {
               <div key={i} className="preview-card">
                 <img src={it.preview} alt={it.name} className="preview" />
                 <div className="file-name">{it.origName}</div>
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>{it.width}×{it.height} — {(it.size / 1024).toFixed(1)} KB</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  {it.width}×{it.height} — {(it.size / 1024).toFixed(1)} KB — {Math.round((it.usedQuality||0)*100)}% quality — {it.usedFormat?.includes("png") ? "PNG" : "JPG"}
+                </div>
                 <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 6 }}>
                   <button className="small" onClick={() => downloadSingle(it)}>Download</button>
                   <button className="small" onClick={() => openInNewTab(it)}>Open</button>
