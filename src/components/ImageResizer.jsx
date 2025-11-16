@@ -2,14 +2,13 @@ import React, { useState } from "react";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
-/** Resize image file using canvas; returns blob */
-function resizeBlob(file, maxWidth, maxHeight, mime, quality) {
+/** Resize image file using canvas; returns blob and a data URL for preview */
+function resizeBlobWithPreview(file, maxWidth, maxHeight, mime, quality) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
       try {
-        // determine new size keeping aspect ratio
         let iw = img.width, ih = img.height;
         let ratio = Math.min(
           maxWidth ? maxWidth / iw : Infinity,
@@ -26,11 +25,14 @@ function resizeBlob(file, maxWidth, maxHeight, mime, quality) {
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, width, height);
 
+        // create preview dataURL (resized small)
+        const previewDataUrl = canvas.toDataURL("image/png");
+
         canvas.toBlob(
           (blob) => {
             URL.revokeObjectURL(url);
-            if (!blob) return reject(new Error("toBlob null"));
-            resolve(blob);
+            if (!blob) return reject(new Error("toBlob returned null"));
+            resolve({ blob, previewDataUrl, width, height });
           },
           mime,
           quality
@@ -49,71 +51,167 @@ function resizeBlob(file, maxWidth, maxHeight, mime, quality) {
 }
 
 export default function ImageResizer() {
-  const [files, setFiles] = useState([]);
+  const [files, setFiles] = useState([]); // original File objects
+  const [items, setItems] = useState([]); // processed { name, blob, preview, width, height, size }
   const [maxWidth, setMaxWidth] = useState(1024);
   const [maxHeight, setMaxHeight] = useState(1024);
   const [format, setFormat] = useState("image/jpeg");
   const [quality, setQuality] = useState(0.85);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
+  const [downloadZip, setDownloadZip] = useState(false);
 
   const handleFiles = (e) => {
     setError("");
+    setItems([]);
     const chosen = Array.from(e.target.files || []).filter(f => f.type.startsWith("image/"));
-    if (!chosen.length) { setError("No images selected."); return; }
+    if (!chosen.length) {
+      setError("No images selected.");
+      return;
+    }
+    // optionally limit to avoid memory blow
+    if (chosen.length > 200) chosen.length = 200;
     setFiles(chosen);
   };
 
-  const downloadSingle = async (file) => {
+  const processAll = async () => {
+    if (!files.length) { setError("Please choose images first."); return; }
+    setError("");
+    setProcessing(true);
+    setItems([]);
     try {
-      const blob = await resizeBlob(file, Number(maxWidth), Number(maxHeight), format, Number(quality));
-      const ext = format === "image/png" ? "png" : "jpg";
-      saveAs(blob, `${file.name.replace(/\.[^.]+$/, "")}-resized.${ext}`);
+      const out = [];
+      for (let f of files) {
+        const { blob, previewDataUrl, width, height } = await resizeBlobWithPreview(
+          f,
+          Number(maxWidth) || undefined,
+          Number(maxHeight) || undefined,
+          format,
+          format === "image/png" ? 1.0 : Math.max(0.05, Number(quality))
+        );
+        out.push({
+          name: f.name.replace(/\.[^.]+$/, ""),
+          origName: f.name,
+          blob,
+          preview: previewDataUrl,
+          width,
+          height,
+          size: blob.size
+        });
+      }
+      setItems(out);
     } catch (err) {
       console.error(err);
-      setError("Failed to resize image: " + (err.message || err));
+      setError("Failed to process images: " + (err.message || err));
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const downloadSingle = async (item) => {
+    try {
+      const ext = format === "image/png" ? "png" : "jpg";
+      saveAs(item.blob, `${item.name}-resized.${ext}`);
+    } catch (err) {
+      console.error(err);
+      setError("Download failed: " + (err.message || err));
+    }
+  };
+
+  const downloadAllSequential = async () => {
+    if (!items.length) { setError("No processed images. Click Process first."); return; }
+    setError("");
+    try {
+      for (let it of items) {
+        await new Promise(res => {
+          // use saveAs which triggers browser save dialog
+          const ext = format === "image/png" ? "png" : "jpg";
+          saveAs(it.blob, `${it.name}-resized.${ext}`);
+          // wait a short moment to avoid overwhelming the browser
+          setTimeout(res, 350);
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed during sequential downloads: " + (err.message || err));
     }
   };
 
   const downloadAllZip = async () => {
-    if (!files.length) { setError("No images."); return; }
-    setProcessing(true); setError("");
+    if (!items.length) { setError("No processed images. Click Process first."); return; }
+    setError("");
+    setProcessing(true);
     try {
       const zip = new JSZip();
-      for (let f of files) {
-        const blob = await resizeBlob(f, Number(maxWidth), Number(maxHeight), format, Number(quality));
-        const ext = format === "image/png" ? "png" : "jpg";
-        zip.file(`${f.name.replace(/\.[^.]+$/, "")}-resized.${ext}`, blob);
+      const ext = format === "image/png" ? "png" : "jpg";
+      for (let it of items) {
+        zip.file(`${it.name}-resized.${ext}`, it.blob);
       }
       const content = await zip.generateAsync({ type: "blob" });
-      saveAs(content, "resized-images.zip");
+      saveAs(content, `resized-images.zip`);
     } catch (err) {
       console.error(err);
       setError("Failed to create zip: " + (err.message || err));
-    } finally { setProcessing(false); }
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const downloadAll = async () => {
+    if (downloadZip) await downloadAllZip();
+    else await downloadAllSequential();
+  };
+
+  const clearAll = () => {
+    setFiles([]);
+    setItems([]);
+    setError("");
+  };
+
+  const openInNewTab = async (item) => {
+    try {
+      const url = URL.createObjectURL(item.blob);
+      window.open(url, "_blank");
+      // revoke later
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to open image: " + (err.message || err));
+    }
   };
 
   return (
     <div>
       <div className="controls">
         <div className="row">
-          <label className="small">Max width (px)
-            <input type="number" value={maxWidth} onChange={(e)=>setMaxWidth(Number(e.target.value||1024))} />
+          <label className="small">
+            Max width (px)
+            <input type="number" value={maxWidth} onChange={(e) => setMaxWidth(Number(e.target.value || 1024))} />
           </label>
-          <label className="small">Max height (px)
-            <input type="number" value={maxHeight} onChange={(e)=>setMaxHeight(Number(e.target.value||1024))} />
+
+          <label className="small">
+            Max height (px)
+            <input type="number" value={maxHeight} onChange={(e) => setMaxHeight(Number(e.target.value || 1024))} />
           </label>
         </div>
 
         <div className="row">
-          <label className="small">Format
-            <select value={format} onChange={(e)=>setFormat(e.target.value)}>
+          <label className="small">
+            Format
+            <select value={format} onChange={(e) => setFormat(e.target.value)}>
               <option value="image/jpeg">JPEG (smaller)</option>
               <option value="image/png">PNG (lossless)</option>
             </select>
           </label>
-          <label className="small">Quality (JPEG only)
-            <input type="number" step="0.05" min="0.1" max="1" value={quality} onChange={(e)=>setQuality(Number(e.target.value||0.85))} />
+
+          <label className="small">
+            Quality (JPEG)
+            <input type="number" step="0.05" min="0.1" max="1" value={quality} onChange={(e) => setQuality(Number(e.target.value || 0.85))} />
+          </label>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" checked={downloadZip} onChange={(e) => setDownloadZip(e.target.checked)} />
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>Download all as ZIP (single file)</span>
           </label>
         </div>
 
@@ -122,31 +220,42 @@ export default function ImageResizer() {
         </div>
 
         <div className="row" style={{ marginTop: 6 }}>
-          <button className="primary" onClick={downloadAllZip} disabled={processing || !files.length}>{processing ? "Working..." : "Download All (zip)"}</button>
-          <button className="ghost small" onClick={() => { setFiles([]); setError(""); }} style={{ marginLeft: 8 }}>Clear</button>
+          <button className="primary" onClick={processAll} disabled={processing || !files.length}>
+            {processing ? "Working..." : "Process images"}
+          </button>
+
+          <button className="primary" onClick={downloadAll} disabled={processing || !items.length} style={{ marginLeft: 8 }}>
+            Download All
+          </button>
+
+          <button className="ghost small" onClick={clearAll} style={{ marginLeft: 8 }}>
+            Clear
+          </button>
         </div>
       </div>
 
       {error && <div className="notice" style={{ color: "crimson" }}>{error}</div>}
 
       <div style={{ marginTop: 12 }}>
-        <strong>Selected images</strong>
-        {files.length === 0 ? <div className="notice">No images selected.</div> :
-        <div className="preview-row">
-          {files.map((f,i)=>{
-            const url = URL.createObjectURL(f);
-            return (
+        <strong>Processed images</strong>
+        {items.length === 0 ? (
+          <div className="notice">No processed images yet. Click <strong>Process images</strong> after selecting files.</div>
+        ) : (
+          <div className="preview-row" style={{ marginTop: 12 }}>
+            {items.map((it, i) => (
               <div key={i} className="preview-card">
-                <img src={url} className="preview" alt={f.name} />
-                <div className="file-name">{f.name}</div>
-                <div style={{ display:"flex", gap:8, width:"100%" }}>
-                  <button className="small" onClick={()=>downloadSingle(f)}>Download</button>
-                  <button className="small" onClick={()=>setFiles(prev=>prev.filter((_,j)=>j!==i))}>Remove</button>
+                <img src={it.preview} alt={it.name} className="preview" />
+                <div className="file-name">{it.origName}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>{it.width}×{it.height} — {(it.size / 1024).toFixed(1)} KB</div>
+                <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 6 }}>
+                  <button className="small" onClick={() => downloadSingle(it)}>Download</button>
+                  <button className="small" onClick={() => openInNewTab(it)}>Open</button>
+                  <button className="small" onClick={() => setItems(prev => prev.filter((_,k) => k !== i))}>Remove</button>
                 </div>
               </div>
-            );
-          })}
-        </div>}
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
