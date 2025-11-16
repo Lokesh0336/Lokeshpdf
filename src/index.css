@@ -1,31 +1,114 @@
 :root{
-  --bg:#f6f8fb;--card:#fff;--muted:#6b7280;--accent:#2563eb;--accent-600:#1e40af;--radius:12px;--shadow:0 8px 24px rgba(15,23,42,0.06);
+  --bg:#f6f8fb;
+  --card:#fff;
+  --muted:#6b7280;
+  --accent:#2563eb;
+  --accent-600:#1e40af;
+  --radius:12px;
+  --shadow:0 8px 24px rgba(15,23,42,0.06);
+  --accent-2: #06b6d4;
 }
-*{box-sizing:border-box}html,body,#root{height:100%}
-body{margin:0;font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial;background:linear-gradient(180deg,#f7f9fc 0%,var(--bg) 100%);color:#0f172a;padding-bottom:48px}
-.container{max-width:1100px;margin:32px auto;padding:20px}
-.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;gap:16px}
-.brand{display:flex;gap:12px;align-items:center}
-.logo{width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-600));display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px;box-shadow:0 6px 18px rgba(37,99,235,0.18)}
-.title{font-size:18px;font-weight:700}
-.subtitle{font-size:13px;color:var(--muted)}
-.card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+
+*{box-sizing:border-box}
+html,body,#root{height:100%}
+body{
+  margin:0;
+  font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+  background:linear-gradient(180deg,#f7f9fc 0%,var(--bg) 100%);
+  color:#0f172a;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  line-height:1.4;
+  padding-bottom:48px;
+}
+
+/* page container */
+.container{max-width:1100px;margin:28px auto;padding:20px}
+
+/* top bar */
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  margin-bottom:14px;
+}
+.brand{
+  display:flex;
+  gap:12px;
+  align-items:center;
+}
+.logo{
+  width:56px;height:56px;border-radius:12px;
+  background:linear-gradient(135deg,var(--accent),var(--accent-600));
+  display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px;
+  box-shadow:0 6px 18px rgba(37,99,235,0.18);
+}
+.brand-text{display:flex;flex-direction:column;line-height:1}
+.brand-title{font-size:18px;font-weight:700}
+.brand-sub{font-size:12px;color:var(--muted)}
+
+/* social connect */
+.connect{
+  display:flex;gap:12px;align-items:center;
+}
+.connect a{
+  display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;text-decoration:none;border:1px solid rgba(15,23,42,0.06);
+  background:transparent;color:var(--accent);font-weight:600;
+}
+.connect svg{width:18px;height:18px;display:inline-block;vertical-align:middle}
+
+/* hero */
+.hero{
+  background:linear-gradient(180deg, rgba(37,99,235,0.06), rgba(37,99,235,0.02));
+  border-radius:14px;padding:22px;margin-bottom:18px;display:flex;align-items:center;gap:20px;box-shadow:0 6px 18px rgba(15,23,42,0.03);
+}
+.hero-left{flex:1}
+.hero h1{margin:0;font-size:24px}
+.hero p{margin:8px 0 0;color:var(--muted)}
+
+/* dashboard cards */
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:14px;
+  margin-bottom:18px;
+}
+.card{
+  background:var(--card);border-radius:12px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;
+}
+.card h3{margin:0;font-size:16px}
+.card p{margin:0;color:var(--muted);font-size:13px}
+.card .cta{margin-top:auto;display:flex;gap:8px;align-items:center}
+.btn-primary{background:linear-gradient(180deg,var(--accent),var(--accent-600));color:white;border:none;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+.btn-ghost{background:transparent;border:1px solid #eef2ff;padding:8px 12px;border-radius:8px;cursor:pointer;color:var(--muted)}
+
+/* main card area (where tabs live) - keep previous card style */
+.card-main{
+  background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;
+}
 .left{flex:1;min-width:300px}
 .right{width:340px;min-width:260px}
+
+/* tabs */
 .tabs{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
 .tab{padding:8px 12px;border-radius:10px;border:1px solid #eef2ff;background:transparent;cursor:pointer}
 .tab.active{background:linear-gradient(180deg,var(--accent),var(--accent-600));color:#fff;border:none;box-shadow:0 6px 20px rgba(37,99,235,0.12)}
-.controls{display:flex;flex-direction:column;gap:12px}
-.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-label.small{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
-input[type="number"], input[type="file"], select, textarea{padding:8px 10px;border-radius:8px;border:1px solid #e6e9ef;background:transparent;font-size:14px;outline:none}
-input[type="number"]:focus, input[type="file"]:focus{box-shadow:0 0 0 4px rgba(37,99,235,0.08);border-color:var(--accent)}
-button.primary{background:linear-gradient(180deg,var(--accent),var(--accent-600));color:white;border:none;padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px rgba(37,99,235,0.12)}
-button.ghost{background:transparent;border:1px solid #e6e9ef;padding:8px 10px;border-radius:8px;cursor:pointer}
-.small{padding:6px 8px;font-size:13px}
+
+/* other small UI bits */
 .preview-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-top:12px}
 .preview-card{background:rgba(255,255,255,0.65);border-radius:10px;padding:8px;display:flex;flex-direction:column;align-items:center;gap:8px;border:1px solid rgba(15,23,42,0.03)}
 .preview{width:100%;height:88px;object-fit:cover;border-radius:8px;border:1px solid rgba(0,0,0,0.04)}
 .notice{margin-top:12px;color:var(--muted);font-size:13px}
+
+/* footer */
 .footer{margin-top:18px;text-align:center;color:var(--muted);font-size:13px}
-@media (max-width:860px){.card{flex-direction:column}.right{width:100%}.header{flex-direction:column;align-items:flex-start;gap:8px}}
+.footer .credit{margin-top:8px;color:var(--muted);font-weight:600}
+.heart{color:#e11d48;margin:0 6px}
+
+/* responsive */
+@media (max-width:860px){
+  .card-main{flex-direction:column}
+  .right{width:100%}
+  .topbar{flex-direction:column;align-items:flex-start;gap:10px}
+}
