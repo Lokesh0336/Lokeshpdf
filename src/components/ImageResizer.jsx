@@ -51,15 +51,35 @@ function resizeBlobWithPreview(file, maxWidth, maxHeight, mime, quality) {
 }
 
 export default function ImageResizer() {
-  const [files, setFiles] = useState([]); // original File objects
-  const [items, setItems] = useState([]); // processed { name, blob, preview, width, height, size }
-  const [maxWidth, setMaxWidth] = useState(1024);
-  const [maxHeight, setMaxHeight] = useState(1024);
+  // original files selected
+  const [files, setFiles] = useState([]);
+  // processed items after pressing Process
+  const [items, setItems] = useState([]);
+  // Mode: "preset" or "custom"
+  const [mode, setMode] = useState("preset");
+
+  // Preset selection (Mobile / Web / Print)
+  const presets = {
+    mobile: { label: "Mobile (800px)", maxWidth: 800, maxHeight: 800 },
+    web: { label: "Web (1200px)", maxWidth: 1200, maxHeight: 1200 },
+    print: { label: "Print (2000px)", maxWidth: 2000, maxHeight: 2000 }
+  };
+  const [selectedPreset, setSelectedPreset] = useState("web");
+
+  // Custom values
+  const [maxWidth, setMaxWidth] = useState(1200);
+  const [maxHeight, setMaxHeight] = useState(1200);
+
+  // Output format & quality
   const [format, setFormat] = useState("image/jpeg");
   const [quality, setQuality] = useState(0.85);
+
+  // Download behavior
+  const [downloadZip, setDownloadZip] = useState(false);
+
+  // UI states
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
-  const [downloadZip, setDownloadZip] = useState(false);
 
   const handleFiles = (e) => {
     setError("");
@@ -69,9 +89,20 @@ export default function ImageResizer() {
       setError("No images selected.");
       return;
     }
-    // optionally limit to avoid memory blow
     if (chosen.length > 200) chosen.length = 200;
     setFiles(chosen);
+  };
+
+  const getEffectiveSize = () => {
+    if (mode === "preset") {
+      const p = presets[selectedPreset];
+      return { maxWidth: p.maxWidth, maxHeight: p.maxHeight };
+    } else {
+      return {
+        maxWidth: Number(maxWidth) || undefined,
+        maxHeight: Number(maxHeight) || undefined
+      };
+    }
   };
 
   const processAll = async () => {
@@ -80,12 +111,13 @@ export default function ImageResizer() {
     setProcessing(true);
     setItems([]);
     try {
+      const { maxWidth: effW, maxHeight: effH } = getEffectiveSize();
       const out = [];
       for (let f of files) {
         const { blob, previewDataUrl, width, height } = await resizeBlobWithPreview(
           f,
-          Number(maxWidth) || undefined,
-          Number(maxHeight) || undefined,
+          effW,
+          effH,
           format,
           format === "image/png" ? 1.0 : Math.max(0.05, Number(quality))
         );
@@ -124,11 +156,9 @@ export default function ImageResizer() {
     try {
       for (let it of items) {
         await new Promise(res => {
-          // use saveAs which triggers browser save dialog
           const ext = format === "image/png" ? "png" : "jpg";
           saveAs(it.blob, `${it.name}-resized.${ext}`);
-          // wait a short moment to avoid overwhelming the browser
-          setTimeout(res, 350);
+          setTimeout(res, 350); // small delay for browser stability
         });
       }
     } catch (err) {
@@ -172,7 +202,6 @@ export default function ImageResizer() {
     try {
       const url = URL.createObjectURL(item.blob);
       window.open(url, "_blank");
-      // revoke later
       setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (err) {
       console.error(err);
@@ -182,19 +211,64 @@ export default function ImageResizer() {
 
   return (
     <div>
-      <div className="controls">
-        <div className="row">
-          <label className="small">
-            Max width (px)
-            <input type="number" value={maxWidth} onChange={(e) => setMaxWidth(Number(e.target.value || 1024))} />
-          </label>
-
-          <label className="small">
-            Max height (px)
-            <input type="number" value={maxHeight} onChange={(e) => setMaxHeight(Number(e.target.value || 1024))} />
-          </label>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontWeight: 700 }}>Resize Mode</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            className={`tab ${mode === "preset" ? "active" : ""}`}
+            onClick={() => setMode("preset")}
+            style={{ padding: "8px 12px", borderRadius: 8 }}
+          >
+            Quick Presets
+          </button>
+          <button
+            className={`tab ${mode === "custom" ? "active" : ""}`}
+            onClick={() => setMode("custom")}
+            style={{ padding: "8px 12px", borderRadius: 8 }}
+          >
+            Custom Size
+          </button>
         </div>
+      </div>
 
+      {/* Preset UI */}
+      {mode === "preset" && (
+        <div className="controls" style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {Object.keys(presets).map((k) => (
+              <label key={k} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <input
+                  type="radio"
+                  name="preset"
+                  checked={selectedPreset === k}
+                  onChange={() => setSelectedPreset(k)}
+                />
+                <div style={{ fontWeight: 700 }}>{presets[k].label}</div>
+                <div style={{ color: "var(--muted)", fontSize: 13 }}>{presets[k].maxWidth}×{presets[k].maxHeight} px</div>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Custom UI */}
+      {mode === "custom" && (
+        <div className="controls" style={{ marginBottom: 10 }}>
+          <div className="row">
+            <label className="small">
+              Max width (px)
+              <input type="number" value={maxWidth} onChange={(e) => setMaxWidth(Number(e.target.value || 0))} />
+            </label>
+            <label className="small">
+              Max height (px)
+              <input type="number" value={maxHeight} onChange={(e) => setMaxHeight(Number(e.target.value || 0))} />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* Format & quality */}
+      <div className="controls" style={{ marginBottom: 10 }}>
         <div className="row">
           <label className="small">
             Format
@@ -204,10 +278,12 @@ export default function ImageResizer() {
             </select>
           </label>
 
-          <label className="small">
-            Quality (JPEG)
-            <input type="number" step="0.05" min="0.1" max="1" value={quality} onChange={(e) => setQuality(Number(e.target.value || 0.85))} />
-          </label>
+          {format === "image/jpeg" && (
+            <label className="small">
+              Quality (JPEG)
+              <input type="number" step="0.05" min="0.1" max="1" value={quality} onChange={(e) => setQuality(Number(e.target.value || 0.85))} />
+            </label>
+          )}
 
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="checkbox" checked={downloadZip} onChange={(e) => setDownloadZip(e.target.checked)} />
@@ -215,11 +291,11 @@ export default function ImageResizer() {
           </label>
         </div>
 
-        <div className="row">
+        <div className="row" style={{ marginTop: 8 }}>
           <input type="file" accept="image/*" multiple onChange={handleFiles} />
         </div>
 
-        <div className="row" style={{ marginTop: 6 }}>
+        <div className="row" style={{ marginTop: 8 }}>
           <button className="primary" onClick={processAll} disabled={processing || !files.length}>
             {processing ? "Working..." : "Process images"}
           </button>
@@ -228,9 +304,7 @@ export default function ImageResizer() {
             Download All
           </button>
 
-          <button className="ghost small" onClick={clearAll} style={{ marginLeft: 8 }}>
-            Clear
-          </button>
+          <button className="ghost small" onClick={clearAll} style={{ marginLeft: 8 }}>Clear</button>
         </div>
       </div>
 
